@@ -1,0 +1,33 @@
+Cumulative Link Mixed Model fitted with the Laplace approximation
+
+formula: pas_ord ~ orientation_label + block + (1 | subject)
+data:    df_pas
+
+ link  threshold nobs logLik   AIC      niter      max.grad cond.H 
+ logit flexible  4800 -5873.23 11774.46 1771(7087) 6.40e-03 5.4e+02
+
+Random effects:
+ Groups  Name        Variance Std.Dev.
+ subject (Intercept) 0.7339   0.8567  
+Number of groups:  subject 8 
+
+Coefficients:
+                             Estimate Std. Error z value Pr(>|z|)    
+orientation_label135° (Left)  0.15536    0.05349   2.904 0.003679 ** 
+block2                        0.04497    0.11975   0.375 0.707297    
+block3                        0.23467    0.12048   1.948 0.051440 .  
+block4                        0.52514    0.11839   4.436 9.18e-06 ***
+block5                        0.39921    0.11998   3.327 0.000877 ***
+block6                        0.06057    0.11928   0.508 0.611565    
+block7                        0.27328    0.11821   2.312 0.020791 *  
+block8                        0.22367    0.11878   1.883 0.059697 .  
+block9                        0.54396    0.11853   4.589 4.45e-06 ***
+block10                       0.34526    0.11854   2.913 0.003585 ** 
+---
+Signif. codes:  0 ‘***’ 0.001 ‘**’ 0.01 ‘*’ 0.05 ‘.’ 0.1 ‘ ’ 1
+
+Threshold coefficients:
+    Estimate Std. Error z value
+1|2  -0.9079     0.3168  -2.866
+2|3   1.0441     0.3170   3.294
+3|4   2.3529     0.3187   7.383

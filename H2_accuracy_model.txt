@@ -1,0 +1,48 @@
+Generalized linear mixed model fit by maximum likelihood (Laplace Approximation) ['glmerMod']
+ Family: binomial  ( logit )
+Formula: is_correct ~ orientation_label + target_contrast + block + (1 |      subject)
+   Data: df_accuracy
+Control: glmerControl(optimizer = "bobyqa", optCtrl = list(maxfun = 1e+05))
+
+      AIC       BIC    logLik -2*log(L)  df.resid 
+   4439.0    4523.2   -2206.5    4413.0      4787 
+
+Scaled residuals: 
+    Min      1Q  Median      3Q     Max 
+-5.7854  0.2733  0.4208  0.5278  1.2095 
+
+Random effects:
+ Groups  Name        Variance Std.Dev.
+ subject (Intercept) 0.4258   0.6525  
+Number of obs: 4800, groups:  subject, 8
+
+Fixed effects:
+                             Estimate Std. Error z value Pr(>|z|)    
+(Intercept)                   0.80636    0.27007   2.986  0.00283 ** 
+orientation_label135° (Left)  0.59383    0.07721   7.691 1.46e-14 ***
+target_contrast               4.25581    0.49332   8.627  < 2e-16 ***
+block2                       -0.07906    0.17218  -0.459  0.64611    
+block3                        0.05897    0.17349   0.340  0.73392    
+block4                        0.04756    0.17369   0.274  0.78424    
+block5                        0.15523    0.17631   0.880  0.37862    
+block6                        0.00758    0.17226   0.044  0.96490    
+block7                        0.12488    0.17409   0.717  0.47318    
+block8                        0.14598    0.17496   0.834  0.40407    
+block9                        0.39939    0.18106   2.206  0.02740 *  
+block10                       0.49668    0.18635   2.665  0.00769 ** 
+---
+Signif. codes:  0 ‘***’ 0.001 ‘**’ 0.01 ‘*’ 0.05 ‘.’ 0.1 ‘ ’ 1
+
+Correlation of Fixed Effects:
+            (Intr) o_135( trgt_c block2 block3 block4 block5 block6 block7 block8 block9
+orn_135°(L) -0.120                                                                      
+trgt_cntrst -0.205  0.018                                                               
+block2      -0.341  0.000  0.025                                                        
+block3      -0.361  0.000  0.137  0.526                                                 
+block4      -0.353  0.000  0.095  0.524  0.532                                          
+block5      -0.358  0.001  0.141  0.519  0.532  0.525                                   
+block6      -0.369 -0.001  0.164  0.531  0.547  0.540  0.541                            
+block7      -0.367  0.002  0.166  0.526  0.541  0.534  0.536  0.551                     
+block8      -0.372  0.002  0.198  0.525  0.544  0.535  0.539  0.554  0.550              
+block9      -0.359  0.006  0.189  0.507  0.525  0.517  0.520  0.536  0.531  0.535       
+block10     -0.368  0.005  0.275  0.496  0.524  0.512  0.520  0.537  0.533  0.540  0.521

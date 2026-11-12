@@ -1,0 +1,885 @@
+---
+title: "Behavioural Analysis"
+output: html_document
+date: "2026-11-12"
+---
+
+```{r analysis, echo=TRUE, message=FALSE, warning=FALSE, fig.width=10, fig.height=6}
+install.packages(c("ordinal", "lme4", "lmerTest", "emmeans", "broom.mixed"))
+# ============================================================
+# 0. SETUP
+# ============================================================
+
+library(tidyverse)
+library(ordinal)
+library(lme4)
+library(lmerTest)
+library(emmeans)
+library(broom.mixed)
+
+setwd("/work")
+
+# Participant and experiment structure
+expected_participants <- 8
+trials_per_block <- 60
+expected_blocks <- 10
+
+# ============================================================
+# 1. IMPORT DATA
+# ============================================================
+
+# Locate all participant CSV files
+files <- list.files(
+  path = "behav",
+  pattern = ".*_experiment_data\\.csv",
+  full.names = TRUE
+)
+
+if (length(files) == 0) {
+  stop("No participant CSV files found in /work/behav.")
+}
+
+# Read all files and extract participant IDs from filenames
+df_raw <- purrr::map_dfr(files, function(file_path) {
+
+  participant_id <- stringr::str_extract(
+    basename(file_path),
+    "\\d{4}"
+  )
+
+  if (is.na(participant_id)) {
+    stop(paste("Could not extract participant ID from:", file_path))
+  }
+
+  readr::read_csv(
+    file_path,
+    show_col_types = FALSE
+  ) %>%
+    mutate(
+      subject = participant_id,
+      source_file = basename(file_path)
+    )
+})
+
+# Check that the required columns exist
+required_columns <- c(
+  "subject",
+  "target_type",
+  "objective_response",
+  "subjective_response",
+  "objective_response_time_ms",
+  "target_contrast"
+)
+
+missing_columns <- setdiff(
+  required_columns,
+  names(df_raw)
+)
+
+if (length(missing_columns) > 0) {
+  stop(
+    paste(
+      "Missing required columns:",
+      paste(missing_columns, collapse = ", ")
+    )
+  )
+}
+
+# Check participant count
+cat("Number of participants:", n_distinct(df_raw$subject), "\n")
+cat("Total number of trials:", nrow(df_raw), "\n")
+
+if (n_distinct(df_raw$subject) != expected_participants) {
+  warning("The number of participants differs from the expected 8.")
+}
+
+```
+
+```{r}
+
+# ============================================================
+# 2. CLEAN AND PREPARE DATA
+# ============================================================
+
+df_clean <- df_raw %>%
+
+  # Clean text columns
+  mutate(
+    subject = factor(subject),
+
+    target_type = stringr::str_trim(
+      as.character(target_type)
+    ),
+
+    objective_response = stringr::str_trim(
+      as.character(objective_response)
+    ),
+
+    # Convert behavioural variables to numeric
+    subjective_response = as.numeric(subjective_response),
+
+    objective_response_time_ms = as.numeric(
+      objective_response_time_ms
+    ),
+
+    target_contrast = as.numeric(target_contrast)
+  ) %>%
+
+  # Remove trials without a valid target orientation
+  filter(
+    target_type %in% c("stimulus_0", "stimulus_1")
+  ) %>%
+
+  # Translate stimulus labels into target orientations
+  mutate(
+    orientation_label = case_when(
+      target_type == "stimulus_0" ~ "45° (Right)",
+      target_type == "stimulus_1" ~ "135° (Left)"
+    ),
+
+    orientation_label = factor(
+      orientation_label,
+      levels = c("45° (Right)", "135° (Left)")
+    ),
+
+    # Correctness: whether the objective response matches
+    # the presented target stimulus
+    is_correct = as.integer(
+      objective_response == target_type
+    ),
+
+    # PAS response as an ordered categorical variable
+    pas_ord = ordered(
+      subjective_response,
+      levels = 1:4
+    )
+  ) %>%
+
+  # Reconstruct experimental blocks using trial order
+  # Each participant completed 600 trials:
+  # 60 trials per block, resulting in 10 blocks.
+  group_by(subject) %>%
+
+  mutate(
+    trial_in_subject = row_number(),
+
+    block = ((trial_in_subject - 1) %/% trials_per_block) + 1,
+
+    block = factor(
+      block,
+      levels = 1:expected_blocks
+    )
+  ) %>%
+
+  ungroup() %>%
+
+  # Remove trials with invalid PAS values
+  # PAS must be between 1 and 4.
+  mutate(
+    pas_ord = ordered(
+      subjective_response,
+      levels = 1:4
+    )
+  )
+
+# Check block reconstruction
+block_check <- df_clean %>%
+  count(subject, block)
+
+print(block_check)
+
+# Check orientation distribution
+print(
+  df_clean %>%
+    count(orientation_label)
+)
+
+# Check missingness in important variables
+missingness <- df_clean %>%
+  summarise(
+    missing_orientation = sum(is.na(orientation_label)),
+    missing_accuracy = sum(is.na(is_correct)),
+    missing_PAS = sum(is.na(pas_ord)),
+    missing_RT = sum(is.na(objective_response_time_ms)),
+    missing_contrast = sum(is.na(target_contrast))
+  )
+
+print(missingness)
+
+```
+
+```{r}
+
+# ============================================================
+# 3. DESCRIPTIVE STATISTICS
+# ============================================================
+
+# Overall descriptive statistics by orientation
+descriptive_summary <- df_clean %>%
+  group_by(orientation_label) %>%
+  summarise(
+    n_trials = n(),
+
+    accuracy = mean(is_correct, na.rm = TRUE),
+
+    mean_PAS = mean(
+      subjective_response,
+      na.rm = TRUE
+    ),
+
+    mean_RT = mean(
+      objective_response_time_ms,
+      na.rm = TRUE
+    ),
+
+    sd_RT = sd(
+      objective_response_time_ms,
+      na.rm = TRUE
+    ),
+
+    .groups = "drop"
+  )
+
+print(descriptive_summary)
+
+# Descriptive statistics by orientation and block
+block_summary <- df_clean %>%
+  group_by(orientation_label, block) %>%
+  summarise(
+    n_trials = n(),
+
+    accuracy = mean(is_correct, na.rm = TRUE),
+
+    mean_PAS = mean(
+      subjective_response,
+      na.rm = TRUE
+    ),
+
+    mean_RT = mean(
+      objective_response_time_ms,
+      na.rm = TRUE
+    ),
+
+    .groups = "drop"
+  )
+
+print(block_summary)
+```
+
+```{r}
+
+# ============================================================
+# 4. H1: SUBJECTIVE PERCEPTUAL CLARITY (PAS)
+# ============================================================
+
+# H1:
+# PAS ratings are comparable between the two target
+# orientations after accounting for experimental block.
+#
+# PAS is ordinal (1-4), so a cumulative link mixed model
+# is used instead of treating PAS as a continuous variable.
+#
+# Subject is included as a random intercept to account
+# for repeated observations from each participant.
+
+df_pas <- df_clean %>%
+  filter(
+    !is.na(pas_ord),
+    !is.na(orientation_label),
+    !is.na(block)
+  )
+
+pas_model <- ordinal::clmm(
+  pas_ord ~ orientation_label + block +
+    (1 | subject),
+
+  data = df_pas,
+  link = "logit",
+  Hess = TRUE,
+  na.action = na.omit
+)
+
+# Model results
+cat("\n---------------- H1: PAS MODEL ----------------\n")
+print(summary(pas_model))
+
+# Confidence intervals for model parameters
+print(confint(pas_model))
+
+# Estimated PAS category probabilities by orientation
+pas_emmeans <- emmeans(
+  pas_model,
+  ~ orientation_label,
+  mode = "prob"
+)
+
+cat("\nEstimated PAS probabilities by orientation:\n")
+print(pas_emmeans)
+
+# Pairwise orientation comparison on the latent scale
+pas_orientation_comparison <- emmeans(
+  pas_model,
+  pairwise ~ orientation_label,
+  mode = "latent"
+)
+
+cat("\nPAS orientation comparison:\n")
+print(pas_orientation_comparison)
+
+```
+
+```{r}
+# ------------------------------------------------------------
+# H1 PLOT 1: PAS DISTRIBUTION BY ORIENTATION
+# ------------------------------------------------------------
+
+# Calculate each participant's proportion of responses
+# in each PAS category. Averaging these proportions means
+# each participant contributes equally to the group result.
+
+pas_distribution <- df_pas %>%
+  group_by(subject, orientation_label, subjective_response) %>%
+  summarise(
+    n = n(),
+    .groups = "drop"
+  ) %>%
+  group_by(subject, orientation_label) %>%
+  mutate(
+    proportion = n / sum(n)
+  ) %>%
+  ungroup() %>%
+  group_by(orientation_label, subjective_response) %>%
+  summarise(
+    mean_proportion = mean(proportion, na.rm = TRUE),
+
+    se = sd(proportion, na.rm = TRUE) /
+      sqrt(n_distinct(df_pas$subject)),
+
+    .groups = "drop"
+  ) %>%
+  mutate(
+    PAS = factor(
+      subjective_response,
+      levels = 1:4,
+      labels = c(
+        "1 - No experience",
+        "2 - Brief glimpse",
+        "3 - Almost clear",
+        "4 - Clear"
+      )
+    )
+  )
+
+ggplot(
+  pas_distribution,
+  aes(
+    x = orientation_label,
+    y = mean_proportion,
+    fill = PAS
+  )
+) +
+  geom_col(
+    position = "stack",
+    width = 0.7
+  ) +
+  scale_y_continuous(
+    labels = scales::percent_format(),
+    limits = c(0, 1)
+  ) +
+  labs(
+    title = "PAS Distribution by Target Orientation",
+    x = "Target Orientation",
+    y = "Proportion of PAS Responses",
+    fill = "PAS Rating"
+  ) +
+  theme_minimal(base_size = 13) +
+  theme(
+    legend.position = "right",
+    plot.title = element_text(face = "bold")
+  )
+
+```
+
+```{r}
+# ------------------------------------------------------------
+# H1 PLOT 2: PAS ACROSS EXPERIMENTAL BLOCKS
+# ------------------------------------------------------------
+
+# Mean PAS is used here only for descriptive visualisation.
+# The ordinal mixed model above remains the inferential test.
+
+pas_block_subject <- df_pas %>%
+  group_by(subject, orientation_label, block) %>%
+  summarise(
+    mean_PAS = mean(
+      subjective_response,
+      na.rm = TRUE
+    ),
+    .groups = "drop"
+  )
+
+pas_block_summary <- pas_block_subject %>%
+  group_by(orientation_label, block) %>%
+  summarise(
+    mean_PAS = mean(mean_PAS, na.rm = TRUE),
+
+    se = sd(mean_PAS, na.rm = TRUE) /
+      sqrt(n()),
+
+    .groups = "drop"
+  )
+
+ggplot(
+  pas_block_summary,
+  aes(
+    x = block,
+    y = mean_PAS,
+    colour = orientation_label,
+    group = orientation_label
+  )
+) +
+  geom_line(linewidth = 1) +
+  geom_point(size = 2.5) +
+  geom_errorbar(
+    aes(
+      ymin = mean_PAS - se,
+      ymax = mean_PAS + se
+    ),
+    width = 0.15
+  ) +
+  scale_y_continuous(
+    breaks = 1:4,
+    limits = c(1, 4)
+  ) +
+  labs(
+    title = "Perceptual Clarity Across Experimental Blocks",
+    x = "Experimental Block",
+    y = "Mean PAS Rating",
+    colour = "Target Orientation"
+  ) +
+  theme_minimal(base_size = 13) +
+  theme(
+    plot.title = element_text(face = "bold")
+  )
+
+```
+
+```{r}
+# ============================================================
+# 5. H2: ORIENTATION-DISCRIMINATION ACCURACY
+# ============================================================
+
+# H2:
+# Accuracy is comparable between the two target orientations
+# after accounting for experimental block.
+#
+# Accuracy is binary (correct/incorrect), so a binomial
+# logistic mixed model is used.
+#
+# Target contrast is included as a control variable because
+# stimulus visibility may influence discrimination accuracy.
+#
+# Subject is included as a random intercept.
+
+df_accuracy <- df_clean %>%
+  filter(
+    !is.na(is_correct),
+    !is.na(orientation_label),
+    !is.na(block),
+    !is.na(target_contrast)
+  )
+
+accuracy_model <- lme4::glmer(
+  is_correct ~ orientation_label +
+    target_contrast +
+    block +
+    (1 | subject),
+
+  family = binomial(link = "logit"),
+  data = df_accuracy,
+
+  control = glmerControl(
+    optimizer = "bobyqa",
+    optCtrl = list(maxfun = 100000)
+  )
+)
+
+cat("\n---------------- H2: ACCURACY MODEL ----------------\n")
+print(summary(accuracy_model))
+
+# Confidence intervals for model parameters
+print(confint(
+  accuracy_model,
+  parm = "beta_",
+  method = "Wald"
+))
+
+# Estimated accuracy probabilities by orientation
+accuracy_emmeans <- emmeans(
+  accuracy_model,
+  ~ orientation_label,
+  type = "response"
+)
+
+cat("\nEstimated accuracy by orientation:\n")
+print(accuracy_emmeans)
+
+# Pairwise comparison between orientations
+accuracy_comparison <- pairs(
+  accuracy_emmeans
+)
+
+cat("\nAccuracy orientation comparison:\n")
+print(accuracy_comparison)
+
+```
+
+```{r}
+# ------------------------------------------------------------
+# H2 PLOT 1: ACCURACY ACROSS EXPERIMENTAL BLOCKS
+# ------------------------------------------------------------
+
+# Calculate accuracy for each participant, orientation,
+# and block. Group means and standard errors are then
+# calculated across participants rather than trials.
+
+accuracy_block_subject <- df_accuracy %>%
+  group_by(subject, orientation_label, block) %>%
+  summarise(
+    accuracy = mean(is_correct, na.rm = TRUE),
+    .groups = "drop"
+  )
+
+accuracy_block_summary <- accuracy_block_subject %>%
+  group_by(orientation_label, block) %>%
+  summarise(
+    mean_accuracy = mean(accuracy, na.rm = TRUE),
+
+    se = sd(accuracy, na.rm = TRUE) /
+      sqrt(n()),
+
+    .groups = "drop"
+  )
+
+ggplot(
+  accuracy_block_summary,
+  aes(
+    x = block,
+    y = mean_accuracy,
+    colour = orientation_label,
+    group = orientation_label
+  )
+) +
+  geom_line(linewidth = 1) +
+  geom_point(size = 2.5) +
+  geom_errorbar(
+    aes(
+      ymin = mean_accuracy - se,
+      ymax = mean_accuracy + se
+    ),
+    width = 0.15
+  ) +
+  scale_y_continuous(
+    labels = scales::percent_format(),
+    limits = c(0, 1)
+  ) +
+  labs(
+    title = "Orientation-Discrimination Accuracy Across Blocks",
+    x = "Experimental Block",
+    y = "Mean Accuracy",
+    colour = "Target Orientation"
+  ) +
+  theme_minimal(base_size = 13) +
+  theme(
+    plot.title = element_text(face = "bold")
+  )
+
+```
+
+```{r}
+# ============================================================
+# 6. H2: RESPONSE TIME
+# ============================================================
+
+# Response time is analysed only for correct trials.
+# Incorrect responses may reflect different decision processes
+# and are therefore not included in the primary RT analysis.
+#
+# RT is usually right-skewed, so it is log-transformed.
+# The model estimates differences in log response time.
+#
+# Target contrast and block are included as fixed effects.
+# Subject is included as a random intercept.
+
+df_rt <- df_clean %>%
+  filter(
+    is_correct == 1,
+    !is.na(objective_response_time_ms),
+    objective_response_time_ms > 0,
+    !is.na(orientation_label),
+    !is.na(block),
+    !is.na(target_contrast)
+  ) %>%
+  mutate(
+    log_RT = log(objective_response_time_ms)
+  )
+
+rt_model <- lmerTest::lmer(
+  log_RT ~ orientation_label +
+    target_contrast +
+    block +
+    (1 | subject),
+
+  data = df_rt,
+  REML = FALSE
+)
+
+cat("\n---------------- H2: RESPONSE TIME MODEL ----------------\n")
+print(summary(rt_model))
+
+# Confidence intervals for model parameters
+print(confint(
+  rt_model,
+  method = "Wald"
+))
+
+# Estimated response times by orientation.
+# Results are initially on the log scale.
+rt_emmeans <- emmeans(
+  rt_model,
+  ~ orientation_label
+)
+
+cat("\nEstimated log response times by orientation:\n")
+print(rt_emmeans)
+
+# Pairwise comparison on the log scale
+rt_comparison <- pairs(
+  rt_emmeans
+)
+
+cat("\nResponse time orientation comparison:\n")
+print(rt_comparison)
+
+# Exponentiate the orientation difference to obtain
+# the response-time ratio between orientations.
+#
+# A ratio of 1 indicates equal response times.
+# A ratio above 1 indicates longer RT for the second
+# orientation relative to the first.
+
+cat("\nResponse-time ratio comparison:\n")
+
+rt_comparison_results <- as.data.frame(
+  summary(
+    rt_comparison,
+    infer = c(TRUE, TRUE)
+  )
+)
+
+print(rt_comparison_results)
+
+# Identify the confidence interval column names
+lower_col <- grep(
+  "lower.CL|LCL",
+  names(rt_comparison_results),
+  value = TRUE
+)[1]
+
+upper_col <- grep(
+  "upper.CL|UCL",
+  names(rt_comparison_results),
+  value = TRUE
+)[1]
+
+# Convert log-scale estimates and confidence intervals
+# into response-time ratios
+rt_comparison_results <- rt_comparison_results %>%
+  mutate(
+    RT_ratio = exp(estimate),
+    lower_ratio = if (!is.na(lower_col)) {
+      exp(.data[[lower_col]])
+    } else {
+      NA_real_
+    },
+    upper_ratio = if (!is.na(upper_col)) {
+      exp(.data[[upper_col]])
+    } else {
+      NA_real_
+    }
+  )
+
+print(rt_comparison_results)
+```
+
+```{r}
+# ------------------------------------------------------------
+# H2 PLOT 2: RESPONSE TIME ACROSS EXPERIMENTAL BLOCKS
+# ------------------------------------------------------------
+
+# Calculate participant-level mean RT for each
+# orientation and block, then calculate group mean and SE.
+
+rt_block_subject <- df_rt %>%
+  group_by(subject, orientation_label, block) %>%
+  summarise(
+    mean_RT = mean(
+      objective_response_time_ms,
+      na.rm = TRUE
+    ),
+    .groups = "drop"
+  )
+
+rt_block_summary <- rt_block_subject %>%
+  group_by(orientation_label, block) %>%
+  summarise(
+    mean_RT = mean(mean_RT, na.rm = TRUE),
+
+    se = sd(mean_RT, na.rm = TRUE) /
+      sqrt(n()),
+
+    .groups = "drop"
+  )
+
+ggplot(
+  rt_block_summary,
+  aes(
+    x = block,
+    y = mean_RT,
+    colour = orientation_label,
+    group = orientation_label
+  )
+) +
+  geom_line(linewidth = 1) +
+  geom_point(size = 2.5) +
+  geom_errorbar(
+    aes(
+      ymin = mean_RT - se,
+      ymax = mean_RT + se
+    ),
+    width = 0.15
+  ) +
+  labs(
+    title = "Response Time Across Experimental Blocks",
+    x = "Experimental Block",
+    y = "Mean Response Time (ms)",
+    colour = "Target Orientation"
+  ) +
+  theme_minimal(base_size = 13) +
+  theme(
+    plot.title = element_text(face = "bold")
+  )
+
+```
+
+```{r}
+# ============================================================
+# 7. MODEL DIAGNOSTICS
+# ============================================================
+
+# ------------------------------------------------------------
+# H1: PAS MODEL
+# ------------------------------------------------------------
+
+# Check model convergence and warnings
+cat("\nH1 convergence information:\n")
+print(pas_model$optRes$convergence)
+
+# Check estimated random-effect variance
+cat("\nH1 random effects:\n")
+print(VarCorr(pas_model))
+
+
+# ------------------------------------------------------------
+# H2: ACCURACY MODEL
+# ------------------------------------------------------------
+
+# Check convergence and singularity
+cat("\nH2 accuracy model convergence:\n")
+print(accuracy_model@optinfo$conv)
+
+cat("\nH2 accuracy model singularity:\n")
+print(isSingular(accuracy_model))
+
+# Basic residual simulation is recommended for a
+# binomial GLMM. DHARMa can be used if installed.
+if (requireNamespace("DHARMa", quietly = TRUE)) {
+
+  accuracy_residuals <- DHARMa::simulateResiduals(
+    fittedModel = accuracy_model
+  )
+
+  plot(accuracy_residuals)
+
+} else {
+  message(
+    "Install DHARMa to perform simulation-based GLMM diagnostics."
+  )
+}
+```
+
+```{r}
+
+# ------------------------------------------------------------
+# H2: RESPONSE TIME MODEL
+# ------------------------------------------------------------
+
+# Residual diagnostics for the linear mixed model
+par(mfrow = c(1, 2))
+
+plot(
+  fitted(rt_model),
+  resid(rt_model),
+  main = "RT Model: Residuals vs Fitted",
+  xlab = "Fitted values",
+  ylab = "Residuals"
+)
+
+abline(h = 0, lty = 2)
+
+qqnorm(
+  resid(rt_model),
+  main = "RT Model: Normal Q-Q Plot"
+)
+
+qqline(resid(rt_model))
+
+par(mfrow = c(1, 1))
+
+```
+
+```{r}
+# ============================================================
+# 8. EXPORT KEY RESULTS
+# ============================================================
+
+# Save descriptive summaries
+write_csv(
+  descriptive_summary,
+  "behavioural_descriptive_summary.csv"
+)
+
+write_csv(
+  block_summary,
+  "behavioural_block_summary.csv"
+)
+
+# Save model summaries as text files
+capture.output(
+  summary(pas_model),
+  file = "H1_PAS_model.txt"
+)
+
+capture.output(
+  summary(accuracy_model),
+  file = "H2_accuracy_model.txt"
+)
+
+capture.output(
+  summary(rt_model),
+  file = "H2_RT_model.txt"
+)
+
+cat("\nAnalysis completed.\n")
+
+```
